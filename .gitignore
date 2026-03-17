@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# API Keys - NEVER commit these
+.env
+secrets.py
+
+# Mac junk
+.DS_Store
+
+# Virtual environment if you create one later
+venv/
+env/
