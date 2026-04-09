@@ -1,5 +1,6 @@
 import pygame
 import sys #need it for when you want to quit the game
+import random
 
 WIDTH = 800
 HEIGHT = 500
@@ -12,6 +13,10 @@ BLUE  = (60, 120, 220)
 GREEN = (60, 200, 100)
 GRAVITY = 0.5
 FLOOR = 400
+BOSS_CHASE_DISTANCE = 300
+BOSS_RETREAT_DISTANCE = 120
+BOSS_WALK_SPEED = 2
+BOSS_RETREAT_SPEED = 1.5
 
 pygame.init() #Wakes up pygame
 
@@ -33,13 +38,22 @@ player = {
     "parry_active": False,
     "parry_timer": 0,
     "invincible_timer": 0,
+    "facing": 'right',
+    "parry_used": False,
 }
 boss = {
-    "rect": pygame.Rect(600, 300, 60, 90),
+    "rect": pygame.Rect(600, FLOOR - 90, 60, 90),
     "color": RED,
     "hp": 200,
     "max_hp": 200,
     "hit_cooldown": 0,
+    "state": 'idle',
+    "state_timer": 90,
+    "attack_type": None,
+    "facing": 'left',
+    'vel_x': 0,
+    "current_combo": [],
+    "combo_index": 0,
 }
 
 move_counts = {
@@ -53,10 +67,73 @@ ATTACK_DATA = {
     "heavy": {"damage": 25, "width": 60, "height": 30, "active_frames": (10, 35)},
     "jump_attack": {"damage": 15, "width": 50, "height": 25, "active_frames": (5, 20)},
 }
+BOSS_ATTACKS = {
+    "slash": {"damage": 15, "width": 70, "height": 30, "windup": 40, "active": 15, "recovery": 30},
+    "lunge": {"damage": 25, "width": 70, "height": 40, "windup": 60, "active": 20, "recovery": 45},
+    "jab": {"damage": 10, "width": 50, "height": 25, "windup": 20, "active": 10, "recovery": 20},
+    "slam": {"damage": 20, "width": 80, "height": 50, "windup": 50, "active": 20, "recovery": 40},
+    "spin": {"damage": 18, "width": 70, "height": 35, "windup": 45, "active": 25, "recovery": 35},
+    "feint": {"damage": 0, "width": 0, "height": 0, "windup": 35, "active": 1, "recovery": 25},
+}
+BOSS_COMBOS = {
+    "default": [
+        ["jab", "slash"],
+        ["slash", "lunge"],
+        ["jab", "jab", "slam"],
+        ["spin", "slash"],
+        ["lunge", "slam"],
+    ],
+    "counter_light": [
+        ["spin", "lunge"],
+        ["spin", "slash", "jab"],
+        ["jab", "spin", "slam"],
+    ],
+    "counter_heavy": [
+        ["jab", "jab", "slash"],
+        ["jab", "lunge"],
+        ["jab", "jab", "jab"],
+    ],
+    "counter_parry": [
+        ["feint", "lunge"],
+        ["feint", "slam"],
+        ["feint", "jab", "slash"],
+    ],
+    "counter_jump": [
+        ["slam", "slash"],
+        ["slam", "lunge"],
+        ["slam", "jab", "slam"],
+    ],
+}
 
+def choose_combo(move_counts):
+    total = sum(move_counts.values())
+    if (total < 20):
+        return random.choice(BOSS_COMBOS["default"])
+    
+    light_pct = move_counts['light'] / total
+    heavy_pct = move_counts['heavy'] / total
+    parry_pct = move_counts['parry'] / total
+    jump_pct = move_counts['jump_attack'] / total
+
+    if (light_pct > 0.4):
+        return random.choice(BOSS_COMBOS["counter_light"])
+    elif (heavy_pct > 0.3):
+        return random.choice(BOSS_COMBOS["counter_heavy"])
+    elif (parry_pct > 0.3):
+        return random.choice(BOSS_COMBOS["counter_parry"])
+    elif (jump_pct > 0.3):
+        return random.choice(BOSS_COMBOS["counter_jump"])
+    else:
+        return random.choice(BOSS_COMBOS["default"])
+
+def draw_health_bar(surface, x, y, current, maxiumum, width=200, height=20, color=GREEN):
+    ratio = current / maxiumum
+    pygame.draw.rect(surface, (80, 80, 80), (x, y, width, height)) #Background Bar
+    pygame.draw.rect(surface, color, (x, y, int(width*ratio), height)) #Current hp bar
+    pygame.draw.rect(surface, WHITE, (x, y, width, height), 2) #border
+    
 
 running = True
-
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -84,14 +161,20 @@ while running:
                 move_counts['jump_attack'] += 1
     
     screen.fill(GRAY)
-    pygame.draw.rect(screen, WHITE, (0, FLOOR, WIDTH, HEIGHT-FLOOR))
+    pygame.draw.rect(screen, (100, 100, 110), (0, FLOOR, WIDTH, HEIGHT-FLOOR))
+    draw_health_bar(screen, 20, HEIGHT - 40, player['hp'], player['max_hp'], color=GREEN) #Player health bar - bottom left
+    draw_health_bar(screen, WIDTH//2 - 150, 20, boss['hp'], boss['max_hp'], width = 300, color = RED)
 
     #Movement
     keys = pygame.key.get_pressed()
     if (keys[pygame.K_LEFT] and player['rect'].left > 0):
         player["rect"].x -= 5
+        if not player['attacking']:
+            player['facing'] = 'left'
     if (keys[pygame.K_RIGHT] and player['rect'].right < WIDTH):
         player["rect"].x += 5
+        if not player['attacking']:
+            player['facing'] = 'right'
     if (keys[pygame.K_UP] and player['onGround']):
         player['vel_y'] = -12
     
@@ -114,13 +197,175 @@ while running:
         player['parry_timer'] -= 1
     else:
         player['parry_active'] = False
+        player['parry_used'] = False
     if (boss['hit_cooldown'] > 0):
         boss['hit_cooldown'] -= 1
+    if (boss['vel_x'] > 0):
+        boss['vel_x'] -= 0.5
+    elif (boss['vel_x'] < 0):
+        boss['vel_x'] += 0.5
 
     if player['attacking'] and player['attack_type'] in ATTACK_DATA:
         attack = ATTACK_DATA[player['attack_type']]
-        frames_elapsed = ({"light": 20, "heavy": 40, "jump_attack": 30}[player['attack_type']] )
+        frames_elapsed = ({"light": 20, "heavy": 40, "jump_attack": 30}[player['attack_type']] - player["attack_timer"])
+        active_start, active_end = attack['active_frames']
+
+        if (active_start <= frames_elapsed <= active_end):
+            if (player['facing'] == 'right'):
+                hitbox = pygame.Rect(
+                    player['rect'].right, #starts the the rightmost of the player
+                    player['rect'].y+10,
+                    attack['width'],
+                    attack['height'],
+                )
+            else:
+                hitbox = pygame.Rect(
+                    player['rect'].left - attack['width'],
+                    player['rect'].y+10,
+                    attack['width'],
+                    attack['height'],
+                )
+            
+            if (hitbox.colliderect(boss['rect']) and boss["hit_cooldown"] == 0): #Checks if the two hitboxes are overlapping
+                boss['hp'] -= attack['damage']
+                boss['hit_cooldown'] = {"light": 20, "heavy": 40, "jump_attack": 30}[player['attack_type']]
+                print(f"{player['attack_type']} hit! Boss hp: {boss['hp']}")
+            
+            pygame.draw.rect(screen, GREEN, hitbox, 2)
+            
+    #Boss State Machine
+    boss["state_timer"] -= 1
+    if (boss['state'] == 'idle'):
+        if (player['rect'].centerx < boss['rect'].centerx): #ensures the boss always faces the character
+            boss['facing'] = 'left'
+        else:
+            boss['facing'] = 'right'
+
+        distance = abs(player['rect'].centerx - boss['rect'].centerx)
+
+        if (distance > BOSS_CHASE_DISTANCE):
+            if boss['facing'] == 'left':
+                boss['rect'].x -= BOSS_WALK_SPEED
+            else:
+                boss['rect'].x += BOSS_WALK_SPEED
+
+        if (distance < BOSS_RETREAT_DISTANCE):
+            if boss['facing'] == 'left':
+                boss['rect'].x += BOSS_RETREAT_SPEED
+            else:
+                boss['rect'].x -= BOSS_RETREAT_SPEED
+        
+        if boss['rect'].left < 0:
+            boss['rect'].left = 0
+        if boss['rect'].right > WIDTH:
+            boss['rect'].right = WIDTH
+        
+        if (boss['state_timer'] <= 0):
+            boss['current_combo'] = choose_combo(move_counts)
+            boss['combo_index'] = 0
+            boss['state'] = 'windup'
+            boss['attack_type'] = boss['current_combo'][0]
+            boss['state_timer'] = BOSS_ATTACKS[boss['attack_type']]['windup']
+
+    elif (boss['state'] == 'windup'):
+        #Change color of the boss when it is about to attack
+        boss['color'] = WHITE if boss['state_timer'] % 6 < 3 else RED #makes it flash
+        
+        if boss['state_timer'] <= 0:
+            boss['state'] = 'attacking'
+            boss['attack_type'] = boss['current_combo'][boss['combo_index']]
+            boss['state_timer'] = BOSS_ATTACKS[boss['attack_type']]['active']
+
+    elif (boss['state'] == 'attacking'):
+        attack = BOSS_ATTACKS[boss['attack_type']]
+
+        #lunge movement
+        if boss['attack_type'] == 'lunge':
+            boss['vel_x'] = -8 if boss['facing'] == 'left' else 8
+        else:
+            boss['vel_x'] = 0
+        
+        boss['rect'].x += boss['vel_x']
+
+        if boss['rect'].left < 0:
+            boss['rect'].left = 0
+        if boss['rect'].right > WIDTH:
+            boss['rect'].right = WIDTH
+
+        if (boss['facing'] == 'left'):
+            boss_hitbox = pygame.Rect(
+                boss['rect'].left - attack['width'],
+                boss['rect'].y + 10,
+                attack['width'],
+                attack['height'],
+            )
+        else:
+            boss_hitbox = pygame.Rect(
+                boss['rect'].right,
+                boss['rect'].y + 10,
+                attack['width'],
+                attack['height'],
+            )
+        if (boss['attack_type'] == 'spin'):
+            boss_hitbox = pygame.Rect(
+                boss['rect'].left - attack['width'],
+                boss['rect'].y+10,
+                attack['width'] * 2 + boss['rect'].width,
+                attack['height']
+            )
+        if (boss['attack_type'] == 'slam'):
+            boss_hitbox = pygame.Rect(
+                boss['rect'].left - 20,
+                boss['rect'].bottom,
+                boss['rect'].width + 40,
+                attack['height']
+            )
+
+        pygame.draw.rect(screen, RED, boss_hitbox, 2)
+
+        if boss_hitbox.colliderect(player['rect']) and player['invincible_timer'] == 0:
+            if player['parry_active'] and not player['parry_used']:
+                player['parry_used'] = True
+                if player['parry_timer'] > 22:
+                    print("Perfect Parry! Boss Stunned!")
+                    boss['state_timer'] = 90
+                    boss['state'] = 'stunned'
+                    boss['vel_x'] = 0
+                    boss['color'] = RED
+                else:
+                    print('Regular Parry! Damage Blocked')
+            elif not player['parry_active']:
+                player['hp'] -= attack['damage']
+                player['invincible_timer'] = 40
+                print(f"Player hit! HP: {player['hp']}")
+        
+        if boss['state_timer'] <= 0:
+            boss['vel_x'] = 0
+            boss['state'] = 'recovery'
+            boss['color'] = RED
+            boss['state_timer'] = BOSS_ATTACKS[boss['attack_type']]['recovery']
     
+    elif (boss['state'] == 'recovery'):
+        if boss['state_timer'] <= 0:
+            boss['combo_index'] += 1
+            if (boss['combo_index'] < len(boss['current_combo'])):
+                boss['attack_type'] = boss['current_combo'][boss['combo_index']]
+                boss['state_timer'] = BOSS_ATTACKS[boss['attack_type']]['windup']
+                boss['state'] = 'windup'
+            else:
+                boss['state'] = 'idle'
+                boss['state_timer'] = random.randint(60, 120)
+    
+    elif (boss['state'] == 'stunned'):
+        boss['color'] = WHITE
+        boss['vel_x'] = 0
+        if boss['state_timer'] <= 0:
+            boss['state'] = 'idle'
+            boss['state_timer'] = random.randint(45, 75)
+            boss['color'] = RED
+    
+    if (player['invincible_timer'] > 0):
+        player['invincible_timer'] -= 1
     
     pygame.draw.rect(screen, player["color"], player["rect"])
     pygame.draw.rect(screen, boss['color'], boss['rect'])
