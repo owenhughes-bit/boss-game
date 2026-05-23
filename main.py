@@ -42,6 +42,9 @@ player = {
     "facing": 'right',
     "parry_used": False,
     "hit_flash": 0,
+    "parry_recovery_timer": 0,
+    "attack_landed": False,
+    "recovery_timer": 0,
 }
 boss = {
     "rect": pygame.Rect(600, FLOOR - 90, 60, 90),
@@ -64,6 +67,17 @@ move_counts = {
     "heavy": 0,
     "parry": 0,
     "jump_attack": 0,
+}
+
+patterns = {
+    "after_boss_recovery": [],
+    "after_boss_lunge": [],
+    "at_close_range": [],
+    "at_far_range": [],
+    "after_jumping": [],
+    "after_taking_damage": [],
+    "response_to_windup": [],
+    "last_move": None,
 }
 ATTACK_DATA = {
     "light": {"damage": 10, "width": 40, "height": 20, "active_frames": (5, 15)},
@@ -109,6 +123,7 @@ BOSS_COMBOS = {
 }
 
 def choose_combo(move_counts):
+
     total = sum(move_counts.values())
     if (total < 20):
         return random.choice(BOSS_COMBOS["default"])
@@ -128,6 +143,16 @@ def choose_combo(move_counts):
         return random.choice(BOSS_COMBOS["counter_jump"])
     else:
         return random.choice(BOSS_COMBOS["default"])
+
+def record_pattern(pattern_key, move, max_history=20):
+        patterns[pattern_key].append(move)
+        if (len(patterns[pattern_key]) > max_history):
+            patterns[pattern_key].pop(0)
+
+def get_dominant(pattern_list):
+        if not pattern_list:
+            return None
+        return max(set(pattern_list), key=pattern_list.count) #finds the most common move in a pattern list
 
 def draw_health_bar(surface, x, y, current, maxiumum, width=200, height=20, color=GREEN):
     ratio = current / maxiumum
@@ -188,24 +213,33 @@ while running:
                 game_state = "playing"
 
             if (game_state == "playing"):    
-                if (event.key == pygame.K_z and not player['attacking'] and player['onGround'] and not player['parry_active']):
+                if (event.key == pygame.K_z and not player['attacking'] and player['onGround'] and not player['parry_active'] and player['recovery_timer'] == 0):
                     player['attacking'] = True
                     player['attack_type'] = "light"
                     player['attack_timer'] = 20
+                    player['attack_landed'] = True
                     move_counts['light'] += 1
-                if (event.key == pygame.K_x and not player['attacking'] and player['onGround'] and not player['parry_active']):
+                    distance = abs(player['rect'].centerx - boss['rect'].centerx)
+                    if (distance < 150):
+                        record_pattern('at_close_range', 'light')
+                    else:
+                        record_pattern('at_far_range', 'light')
+                if (event.key == pygame.K_x and not player['attacking'] and player['onGround'] and not player['parry_active'] and player['recovery_timer'] == 0):
                     player['attacking'] = True
                     player['attack_type'] = "heavy"
                     player['attack_timer'] = 40
+                    player['attack_landed'] = True
+
                     move_counts['heavy'] += 1
-                if (event.key == pygame.K_c and not player['attacking']):
+                if (event.key == pygame.K_c and not player['attacking'] and player['parry_recovery_timer'] == 0):
                     player['parry_active'] = True
                     player['parry_timer'] = 30
                     move_counts['parry'] += 1
-                if (event.key == pygame.K_SPACE and not player['onGround'] and not player['attacking'] and not player['parry_active']):
+                if (event.key == pygame.K_SPACE and not player['onGround'] and not player['attacking'] and not player['parry_active'] and player['recovery_timer'] == 0):
                     player['attacking'] = True
                     player['attack_type'] = "jump_attack"
                     player['attack_timer'] = 30
+                    player['attack_landed'] = True
                     move_counts['jump_attack'] += 1
     
     canvas = pygame.Surface((WIDTH, HEIGHT))
@@ -223,12 +257,17 @@ while running:
     if (game_state == "playing"):
         #Movement
         keys = pygame.key.get_pressed()
+        if (player['attacking']):
+            move_speed = 1.3
+        else:
+            move_speed = 5
+
         if (keys[pygame.K_LEFT] and player['rect'].left > 0):
-            player["rect"].x -= 5
+            player["rect"].x -= move_speed
             if not player['attacking']:
                 player['facing'] = 'left'
         if (keys[pygame.K_RIGHT] and player['rect'].right < WIDTH):
-            player["rect"].x += 5
+            player["rect"].x += move_speed
             if not player['attacking']:
                 player['facing'] = 'right'
         if (keys[pygame.K_UP] and player['onGround']):
@@ -246,14 +285,24 @@ while running:
         #Fighting
         if (player['attack_timer'] > 0):
             player['attack_timer'] -= 1
-        else:
+        if player['attack_timer'] == 0 and player['attacking']:
+            recovery_map = {"light": 8, "heavy": 18, "jump_attack": 10}
+            player['recovery_timer'] = recovery_map.get(player['attack_type'], 8)
             player['attacking'] = False
             player['attack_type'] = None
+        if player['recovery_timer'] > 0:
+            player['recovery_timer'] -= 1
         if (player['parry_timer'] > 0):
             player['parry_timer'] -= 1
         else:
-            player['parry_active'] = False
-            player['parry_used'] = False
+            if player['parry_active']:
+                if not player['parry_used']:
+                    player['parry_recovery_timer'] = 25
+                    print("Parry whiffed!")
+                player['parry_active'] = False
+                player['parry_used'] = False
+        if player['parry_recovery_timer'] > 0:
+            player['parry_recovery_timer'] -= 1
         if (boss['hit_cooldown'] > 0):
             boss['hit_cooldown'] -= 1
         if (boss['vel_x'] > 0):
@@ -301,6 +350,10 @@ while running:
                     boss['hp'] -= attack['damage']
                     boss['hit_cooldown'] = {"light": 20, "heavy": 40, "jump_attack": 30}[player['attack_type']]
                     boss['hit_flash'] = 10
+                    player['attack_landed'] = True
+                    if (player['attack_type'] == 'heavy'):
+                        shake_duration = 8
+                        shake_intensity = 4
                     print(f"{player['attack_type']} hit! Boss hp: {boss['hp']}")
                 
                 pygame.draw.rect(canvas, GREEN, hitbox, 2)
@@ -414,8 +467,8 @@ while running:
                         player['vel_x'] = -8
                     else:
                         player['vel_x'] = 8
-                        shake_duration = 12
-                        shake_intensity = 6
+                    shake_duration = 12
+                    shake_intensity = 6
                     player['vel_y'] = -5
                     print(f"Player hit! HP: {player['hp']}")
             
@@ -461,7 +514,7 @@ while running:
         draw_end_screen(canvas, "YOU DIED", RED)
     elif game_state == "win":
         draw_end_screen(canvas, "VICTORY", GREEN)
-        
+
     screen.blit(canvas, screen_offset)
     pygame.display.flip() #Displays everything written on screen
     clock.tick(FPS) #sets FPS cap so that time isn't faster based on processing power
