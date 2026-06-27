@@ -2,7 +2,6 @@
 __pycache__/
 *.pyc
 *.pyo
-.env
 
 # API Keys - NEVER commit these
 .env
@@ -14,3 +13,11 @@ secrets.py
 # Virtual environment if you create one later
 venv/
 env/
+
+# Trained model weights
+*.pth
+*.pt
+
+# Training logs / checkpoints
+runs/
+*.log

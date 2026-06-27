@@ -17,6 +17,7 @@ BOSS_CHASE_DISTANCE = 300
 BOSS_RETREAT_DISTANCE = 120
 BOSS_WALK_SPEED = 2
 BOSS_RETREAT_SPEED = 1.5
+WHIFF_MULTIPLIER = 2.5
 
 pygame.init() #Wakes up pygame
 
@@ -145,14 +146,14 @@ def choose_combo(move_counts):
         return random.choice(BOSS_COMBOS["default"])
 
 def record_pattern(pattern_key, move, max_history=20):
-        patterns[pattern_key].append(move)
-        if (len(patterns[pattern_key]) > max_history):
-            patterns[pattern_key].pop(0)
+    patterns[pattern_key].append(move)
+    if (len(patterns[pattern_key]) > max_history):
+        patterns[pattern_key].pop(0)
 
 def get_dominant(pattern_list):
-        if not pattern_list:
-            return None
-        return max(set(pattern_list), key=pattern_list.count) #finds the most common move in a pattern list
+    if not pattern_list:
+        return None
+    return max(set(pattern_list), key=pattern_list.count) #finds the most common move in a pattern list
 
 def draw_health_bar(surface, x, y, current, maxiumum, width=200, height=20, color=GREEN):
     ratio = current / maxiumum
@@ -217,7 +218,7 @@ while running:
                     player['attacking'] = True
                     player['attack_type'] = "light"
                     player['attack_timer'] = 20
-                    player['attack_landed'] = True
+                    player['attack_landed'] = False
                     move_counts['light'] += 1
                     distance = abs(player['rect'].centerx - boss['rect'].centerx)
                     if (distance < 150):
@@ -228,7 +229,7 @@ while running:
                     player['attacking'] = True
                     player['attack_type'] = "heavy"
                     player['attack_timer'] = 40
-                    player['attack_landed'] = True
+                    player['attack_landed'] = False
 
                     move_counts['heavy'] += 1
                 if (event.key == pygame.K_c and not player['attacking'] and player['parry_recovery_timer'] == 0):
@@ -239,7 +240,7 @@ while running:
                     player['attacking'] = True
                     player['attack_type'] = "jump_attack"
                     player['attack_timer'] = 30
-                    player['attack_landed'] = True
+                    player['attack_landed'] = False
                     move_counts['jump_attack'] += 1
     
     canvas = pygame.Surface((WIDTH, HEIGHT))
@@ -287,7 +288,10 @@ while running:
             player['attack_timer'] -= 1
         if player['attack_timer'] == 0 and player['attacking']:
             recovery_map = {"light": 8, "heavy": 18, "jump_attack": 10}
-            player['recovery_timer'] = recovery_map.get(player['attack_type'], 8)
+            base_recovery = recovery_map.get(player['attack_type'], 8)
+            if not player['attack_landed']:
+                base_recovery = int(base_recovery * WHIFF_MULTIPLIER)
+            player['recovery_timer'] = base_recovery
             player['attacking'] = False
             player['attack_type'] = None
         if player['recovery_timer'] > 0:
