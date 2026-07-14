@@ -18,6 +18,8 @@ BOSS_RETREAT_DISTANCE = 120
 BOSS_WALK_SPEED = 2
 BOSS_RETREAT_SPEED = 1.5
 WHIFF_MULTIPLIER = 2.5
+SLAM_REACH_UP = 60
+SLAM_REACH_FORWARD = 70
 
 pygame.init() #Wakes up pygame
 
@@ -443,12 +445,20 @@ while running:
                     attack['height']
                 )
             if (boss['attack_type'] == 'slam'):
-                boss_hitbox = pygame.Rect(
-                    boss['rect'].left - 20,
-                    boss['rect'].bottom,
-                    boss['rect'].width + 40,
-                    attack['height']
-                )
+                if boss['facing'] == 'right':
+                    boss_hitbox = pygame.Rect(
+                        boss['rect'].right - 20,                    # starts at the shoulder, slightly inside
+                        boss['rect'].top - SLAM_REACH_UP,           # extends up above the boss
+                        SLAM_REACH_FORWARD,                         # how far forward it reaches
+                        SLAM_REACH_UP + 40                          # tall enough to cover shoulder-to-tip
+                    )
+                else:
+                    boss_hitbox = pygame.Rect(
+                        boss['rect'].left + 20 - SLAM_REACH_FORWARD,  # mirrored to the left
+                        boss['rect'].top - SLAM_REACH_UP,
+                        SLAM_REACH_FORWARD,
+                        SLAM_REACH_UP + 40
+                    )
 
             pygame.draw.rect(canvas, RED, boss_hitbox, 2)
 
