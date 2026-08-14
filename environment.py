@@ -20,6 +20,10 @@ WHIFF_MULTIPLIER = 2.5
 SLAM_REACH_UP = 60
 SLAM_REACH_FORWARD = 70
 
+PLAYER_MOVE_SPEED = 5
+PLAYER_MOVE_SPEED_ATTACKING = 1.3
+JUMP_VELOCITY = -12
+
 DAMAGE_DEALT_WEIGHT = 1.0
 DAMAGE_TAKEN_WEIGHT = 1.0
 TIME_PENALTY = 0.01
@@ -54,10 +58,12 @@ ACTION_MAP = {
     6: 'feint',
 }
 ACTION_SIZE = len(ACTION_MAP)
+STATE_SIZE = 8
 
 class BossFightEnv:
-    def __init__(self, render=False):
+    def __init__(self, render=False, opponent_bot = None):
         self.render = render
+        self.opponent_bot = opponent_bot
         if self.render:
             self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
             self.clock = pygame.time.Clock()
@@ -65,10 +71,11 @@ class BossFightEnv:
 
     def reset(self):
         #build fresh player and boss state, return opening state
-        self.prev_player_hp = self.player['hp']
-        self.prev_boss_hp = self.boss['hp']
+        player_start_x = random.randint(150, 300)
+        boss_start_x = player_start_x + random.randint(200, 350)
+
         self.player = {
-            "rect": pygame.Rect(150, 300, 50, 80),
+            "rect": pygame.Rect(player_start_x, 300, 50, 80),
             "hp": 100,
             "max_hp": 100,
             "vel_y": 0,
@@ -88,7 +95,7 @@ class BossFightEnv:
         }
 
         self.boss = {
-            "rect": pygame.Rect(600, FLOOR - 90, 60, 90),
+            "rect": pygame.Rect(boss_start_x, FLOOR - 90, 60, 90),
             "hp": 200,
             "max_hp": 200,
             "hit_cooldown": 0,
@@ -98,6 +105,8 @@ class BossFightEnv:
             "facing": 'left',
             'vel_x': 0,
         }
+        self.prev_player_hp = self.player['hp']
+        self.prev_boss_hp = self.boss['hp']
         return self.get_state()
 
     def get_state(self):
@@ -178,7 +187,9 @@ class BossFightEnv:
         if self.player['invincible_timer'] > 0:
             self.player['invincible_timer'] -= 1
         
-        #player_action = self.opponent_bot.choose_action(self)
+        if self.opponent_bot is not None:
+            player_action = self.opponent_bot.choose_action(self)
+            self.apply_player_action(player_action)
 
         #-- Layer 2: Boss --
         if self.boss['state'] == 'idle':
@@ -341,6 +352,52 @@ class BossFightEnv:
         done = self.player['hp'] <= 0 or self.boss['hp'] <= 0
         reward = self.calculate_reward()
         return self.get_state(), reward, done
+    
+    def apply_player_action(self, action):
+        p = self.player
+
+        if action == 'move_left':
+            if not p['attacking'] and p['recovery_timer'] == 0:
+                p['facing'] = 'left'
+            p['rect'].x -= PLAYER_MOVE_SPEED_ATTACKING if (p['attacking'] or p['recovery_timer'] > 0) else PLAYER_MOVE_SPEED
+
+        elif action == 'move_right':
+            if not p['attacking'] and p['recovery_timer'] == 0:
+                p['facing'] = 'right'
+            p['rect'].x += PLAYER_MOVE_SPEED_ATTACKING if (p['attacking'] or p['recovery_timer'] > 0) else PLAYER_MOVE_SPEED
+
+        elif action == 'jump':
+            if p['onGround']:
+                p['vel_y'] = JUMP_VELOCITY
+
+        elif action == 'light':
+            if not p['attacking'] and p['onGround'] and not p['parry_active'] and p['recovery_timer'] == 0:
+                p['attacking'] = True
+                p['attack_type'] = 'light'
+                p['attack_timer'] = ATTACK_DURATION['light']
+                p['attack_landed'] = False
+
+        elif action == 'heavy':
+            if not p['attacking'] and p['onGround'] and not p['parry_active'] and p['recovery_timer'] == 0:
+                p['attacking'] = True
+                p['attack_type'] = 'heavy'
+                p['attack_timer'] = ATTACK_DURATION['heavy']
+                p['attack_landed'] = False
+
+        elif action == 'jump_attack':
+            if not p['onGround'] and not p['attacking'] and not p['parry_active'] and p['recovery_timer'] == 0:
+                p['attacking'] = True
+                p['attack_type'] = 'jump_attack'
+                p['attack_timer'] = ATTACK_DURATION['jump_attack']
+                p['attack_landed'] = False
+
+        elif action == 'parry':
+            if not p['attacking'] and p['parry_recovery_timer'] == 0:
+                p['parry_active'] = True
+                p['parry_timer'] = 30
+                p['parry_used'] = False
+
+        # 'nothing' → do nothing
 
 
     def calculate_reward(self):
@@ -352,7 +409,7 @@ class BossFightEnv:
 
         #damage delt to the boss - bad
         damage_taken = self.prev_boss_hp - self.boss['hp']
-        reward = damage_taken * DAMAGE_TAKEN_WEIGHT
+        reward -= damage_taken * DAMAGE_TAKEN_WEIGHT
 
         reward -= TIME_PENALTY
 
